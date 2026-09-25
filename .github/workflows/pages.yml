@@ -3,10 +3,6 @@ name: Deploy AI Daily Brief
 on:
   push:
     branches: [main]
-    paths:
-      - index.html
-      - .nojekyll
-      - .github/workflows/pages.yml
   workflow_dispatch:
 
 permissions:
@@ -28,6 +24,46 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate archive
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const html = fs.readFileSync('index.html', 'utf8');
+
+          if (!html.startsWith('<!doctype html>') || !html.includes('</html>')) {
+            throw new Error('index.html is incomplete');
+          }
+
+          const articles = [...html.matchAll(/<article\b[^>]*data-date="([^"]+)"/g)].map(m => m[1]);
+          const inputs = [...html.matchAll(/<input\b[^>]*id="pick-([0-9-]+)"/g)].map(m => m[1]);
+          if (!articles.length || articles.length !== new Set(articles).size) {
+            throw new Error('article dates are missing or duplicated');
+          }
+          if (inputs.length !== new Set(inputs).size || inputs.length !== articles.length) {
+            throw new Error('date selectors do not match articles');
+          }
+          if (articles.some(date => !inputs.includes(date))) {
+            throw new Error('an article has no matching date selector');
+          }
+
+          for (const [, script] of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {
+            new Function(script);
+          }
+
+          const prohibited = [
+            /libfile_[a-z0-9]{16,}/i,
+            /\/workspace\/scratch\//i,
+            /sandbox:/i,
+            /对(?:我的|你的)相关性/
+          ];
+          if (prohibited.some(pattern => pattern.test(html))) {
+            throw new Error('public-content privacy check failed');
+          }
+
+          console.log(`Validated ${articles.length} archived briefs.`);
+          NODE
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

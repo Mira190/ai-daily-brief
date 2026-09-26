@@ -199,7 +199,7 @@
           <h3>AI Engineering / 基础设施</h3>
           <h4>Rig：cache-stable harness 是 token efficiency 的工程变量</h4>
           <p><strong>发布时间：</strong>9 月 27 日进入 Show HN。Rig 提供 macOS/Linux 单 binary，以 OpenAI-compatible endpoint 连接本地或托管模型；核心 loop 417 行，支持并行工具、sandboxed workers、cron、task board、durable memory 与 SSH 恢复。项目自报数千真实 turns 中 99% tokens 命中 cache，并称 672 commits 多数由 Rig 自身生成。</p>
-          <p><strong>为什么重要：</strong>它抓住一个常被忽略的成本杠杆：保持 system prefix 和工具定义稳定，让长会话复用 cache，而不是不断重写 context。<strong>开发者影响：</strong>应测 <code>cached input ratio / compaction frequency / wall time / accepted change / restart recovery</code>，而不只看 token 总数。默认示例中 <code>sandbox: off</code>，生产试用必须改为受限 worker。<strong>证据成熟度：早期</strong>——实现可检查，关键性能数字为作者自报。<a href="https://tryrig.ai/">Rig</a></p>
+          <p><strong>为什么重要：</strong>它抓住一个常被忽略的成本杠杆：保持 system prefix 和工具定义稳定，让长会话复用 cache，而不是不断重写 context。<strong>开发者影响：</strong>应测 <code>cached input ratio / compaction frequency / wall time / accepted change / restart recovery</code>，而不只看 token 总数。默认示例关闭隔离，生产试用必须改为受限 worker。<strong>证据成熟度：早期</strong>——实现可检查，关键性能数字为作者自报。<a href="https://tryrig.ai/">Rig</a></p>
 
           <h3>开源项目</h3>
           <h4>Hindsight：memory 开始同时接受准确率、成本与延迟审计</h4>
@@ -271,7 +271,7 @@
           <h3>AI Engineering / Infrastructure</h3>
           <h4>Rig: a cache-stable harness is a token-efficiency variable</h4>
           <p><strong>Published:</strong> Entered Show HN on September 27. Rig is a macOS/Linux single binary that connects to local or hosted OpenAI-compatible endpoints. Its 417-line core loop supports parallel tools, sandboxed workers, cron, a task board, durable memory, and SSH resumption. The project reports 99% token cache hits over thousands of real turns and says most of its 672 commits were written by Rig itself.</p>
-          <p><strong>Why it matters:</strong> It highlights an overlooked cost lever: stabilize the system prefix and tool definitions so long sessions can reuse cache instead of constantly rewriting context. <strong>Developer impact:</strong> Measure <code>cached input ratio / compaction frequency / wall time / accepted change / restart recovery</code>, not token totals alone. The sample configuration uses <code>sandbox: off</code>; production trials need restricted workers. <strong>Evidence maturity: early.</strong> The implementation is inspectable; headline performance remains author-reported. <a href="https://tryrig.ai/">Rig</a></p>
+          <p><strong>Why it matters:</strong> It highlights an overlooked cost lever: stabilize the system prefix and tool definitions so long sessions can reuse cache instead of constantly rewriting context. <strong>Developer impact:</strong> Measure <code>cached input ratio / compaction frequency / wall time / accepted change / restart recovery</code>, not token totals alone. The sample configuration disables isolation; production trials need restricted workers. <strong>Evidence maturity: early.</strong> The implementation is inspectable; headline performance remains author-reported. <a href="https://tryrig.ai/">Rig</a></p>
 
           <h3>Open source</h3>
           <h4>Hindsight: memory now faces accuracy, cost, and latency audits together</h4>

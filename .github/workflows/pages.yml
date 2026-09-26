@@ -62,6 +62,7 @@ jobs:
             throw new Error('could not parse every article for bilingual validation');
           }
           for (const [, date, body] of articleBlocks) {
+            if (date < '2026-09-01') continue; // bilingual archive format launched with the September backfill
             const zh = (body.match(/data-lang="zh"/g) || []).length;
             const en = (body.match(/data-lang="en"/g) || []).length;
             if (zh !== 1 || en !== 1) {

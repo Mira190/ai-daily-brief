@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Validate archive
         shell: bash
@@ -46,6 +48,37 @@ jobs:
           }
           if (articles.some(date => !inputs.includes(date))) {
             throw new Error('an article has no matching date selector');
+          }
+
+          const latest = [...articles].sort().at(-1);
+          const checkedTags = [...html.matchAll(/<input\b[^>]*\bchecked\b[^>]*>/g)].map(m => m[0]);
+          const checkedDates = checkedTags.map(tag => (tag.match(/id="pick-([0-9-]+)"/) || [])[1]).filter(Boolean);
+          if (checkedDates.length !== 1 || checkedDates[0] !== latest) {
+            throw new Error(`latest archive date ${latest} must be the single checked selector (got ${checkedDates.join(', ') || 'none'})`);
+          }
+
+          const articleBlocks = [...html.matchAll(/<article\b[^>]*data-date="([^"]+)"[^>]*>([\s\S]*?)<\/article>/g)];
+          if (articleBlocks.length !== articles.length) {
+            throw new Error('could not parse every article for bilingual validation');
+          }
+          for (const [, date, body] of articleBlocks) {
+            if (date < '2026-09-01') continue; // bilingual archive format launched with the September backfill
+            const zh = (body.match(/data-lang="zh"/g) || []).length;
+            const en = (body.match(/data-lang="en"/g) || []).length;
+            if (zh !== 1 || en !== 1) {
+              throw new Error(`${date}: expected exactly one zh and one en language pane`);
+            }
+          }
+
+          try {
+            const prev = require('child_process').execFileSync('git', ['show', 'HEAD^:index.html'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+            const previousCount = [...prev.matchAll(/<article\b[^>]*data-date="([^"]+)"/g)].length;
+            if (articles.length < previousCount) {
+              throw new Error(`archive count decreased from ${previousCount} to ${articles.length}`);
+            }
+          } catch (error) {
+            if (/archive count decreased/.test(String(error))) throw error;
+            console.log('No readable parent index.html; skipping archive-count regression check.');
           }
 
           for (const [, script] of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {

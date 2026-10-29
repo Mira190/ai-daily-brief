@@ -9,7 +9,15 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import archive, digest, sources
+from . import archive, digest, reddit, sources
+
+FETCHERS = {
+    "hn": lambda http, since, opts: sources.fetch_hacker_news(http, since, opts.hn_min_points),
+    "hf": lambda http, since, opts: sources.fetch_hf_papers(http, since),
+    "github": lambda http, since, opts: sources.fetch_github(http, since, opts.github_min_stars),
+    "rss": lambda http, since, opts: sources.fetch_rss(http, since),
+    "reddit": lambda http, since, opts: reddit.fetch(http, since, Path(opts.out) / ".cache"),
+}
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -22,7 +30,7 @@ def run(opts, http=None, now=None):
     items, errors = [], {}
     for name in opts.sources:
         try:
-            result = sources.FETCHERS[name](http, since, opts)
+            result = FETCHERS[name](http, since, opts)
         except Exception as e:
             errors[name] = str(e)
             continue
@@ -40,14 +48,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="python -m scan", description=__doc__.splitlines()[0])
     parser.add_argument("--hours", type=int, default=24, help="window length (default 24)")
     parser.add_argument("--tz", default="Australia/Sydney")
-    parser.add_argument("--sources", type=lambda s: s.split(","), default=list(sources.FETCHERS),
-                        help=f"comma list of {','.join(sources.FETCHERS)}")
+    parser.add_argument("--sources", type=lambda s: s.split(","), default=list(FETCHERS),
+                        help=f"comma list of {','.join(FETCHERS)}")
     parser.add_argument("--archive", default=str(ROOT / "index.html"), help="published archive used for dedupe")
     parser.add_argument("--out", default=str(ROOT / "scan-output"))
     parser.add_argument("--hn-min-points", type=int, default=30)
     parser.add_argument("--github-min-stars", type=int, default=50)
     opts = parser.parse_args(argv)
-    unknown = set(opts.sources) - set(sources.FETCHERS)
+    unknown = set(opts.sources) - set(FETCHERS)
     if unknown:
         parser.error(f"unknown sources: {', '.join(sorted(unknown))}")
 

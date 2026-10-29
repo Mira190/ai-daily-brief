@@ -7,7 +7,6 @@ without one is dropped rather than treated as new.
 import html
 import os
 import re
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
@@ -31,8 +30,6 @@ RSS_FEEDS = [
     ("Google DeepMind Blog", "https://deepmind.google/blog/rss.xml"),
     ("Simon Willison", "https://simonwillison.net/atom/everything/"),
 ]
-SUBREDDITS = ["LocalLLaMA", "MachineLearning", "ClaudeAI", "ChatGPT"]
-REDDIT_PAUSE = 3
 GITHUB_TOPICS = ["llm", "ai-agents", "mcp"]
 
 
@@ -63,9 +60,13 @@ class Http:
         return res.json()
 
     def get_bytes(self, url):
-        res = self.session.get(url, timeout=TIMEOUT)
+        res = self.get(url)
         res.raise_for_status()
         return res.content
+
+    def get(self, url):
+        """The raw response, for callers that read status and rate-limit headers themselves."""
+        return self.session.get(url, timeout=TIMEOUT)
 
 
 class _TextOnly(HTMLParser):
@@ -100,7 +101,11 @@ def _entry_time(entry):
 
 
 def fetch_feed(http, since, name, url, limit=10):
-    feed = feedparser.parse(http.get_bytes(url))
+    return parse_feed(http.get_bytes(url), since, name, limit)
+
+
+def parse_feed(content, since, name, limit=10):
+    feed = feedparser.parse(content)
     items = []
     for entry in feed.entries:
         published = _entry_time(entry)
@@ -185,26 +190,3 @@ def fetch_github(http, since, min_stars=50):
                                             _parse_iso(repo["created_at"]), score=repo["stargazers_count"],
                                             excerpt=plain_text(repo["description"]))
     return sorted(found.values(), key=lambda i: i.score or 0, reverse=True)[:10]
-
-
-def fetch_reddit(http, since):
-    items, errors = [], {}
-    for n, sub in enumerate(SUBREDDITS):
-        name = f"r/{sub}"
-        if n:
-            time.sleep(REDDIT_PAUSE)  # back-to-back requests get 429
-        try:
-            # the JSON API answers 403 without OAuth; the RSS view does not
-            items += fetch_feed(http, since, name, f"https://www.reddit.com/r/{sub}/top/.rss?t=day", limit=5)
-        except Exception as e:
-            errors[name] = str(e)
-    return items, errors
-
-
-FETCHERS = {
-    "hn": lambda http, since, opts: fetch_hacker_news(http, since, opts.hn_min_points),
-    "hf": lambda http, since, opts: fetch_hf_papers(http, since),
-    "github": lambda http, since, opts: fetch_github(http, since, opts.github_min_stars),
-    "rss": lambda http, since, opts: fetch_rss(http, since),
-    "reddit": lambda http, since, opts: fetch_reddit(http, since),
-}

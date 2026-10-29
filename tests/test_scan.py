@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from scan import __main__ as cli
-from scan import archive, digest, sources
+from scan import archive, digest, reddit, sources
 
 NOW = datetime(2026, 10, 30, 9, 0, tzinfo=timezone.utc)
 SINCE = NOW - timedelta(hours=24)
@@ -146,6 +146,84 @@ class CliTest(unittest.TestCase):
             self.assertIn("已引用：2026-09-27", md)
             self.assertIn("- github: rate limited", md)
             self.assertIn('"seen_in": [\n        "2026-09-27"\n      ]', digest.to_json(scan))
+
+
+class Response:
+    def __init__(self, status, headers, content=b""):
+        self.status_code, self.headers, self.content = status, headers, content
+
+
+class RedditHttp:
+    """Answers each subreddit from a queue of responses; records what was requested."""
+
+    def __init__(self, *responses):
+        self.responses, self.requested = list(responses), []
+
+    def get(self, url):
+        self.requested.append(url.split("/r/")[1].split("/")[0])
+        return self.responses.pop(0)
+
+
+def reddit_ok(reset="50", title="Qwen 4 local benchmarks"):
+    body = rss((title, "https://www.reddit.com/r/x/comments/1/", "Thu, 29 Oct 2026 22:00:00 GMT", "post"))
+    return Response(200, {"x-ratelimit-remaining": "0.0", "x-ratelimit-reset": reset}, body)
+
+
+class RedditTest(unittest.TestCase):
+    def run_fetch(self, http, cache, now=NOW):
+        self.slept = []
+        return reddit.fetch(http, SINCE, cache, sleep=self.slept.append, now=lambda: now,
+                            jitter=lambda lo, hi: lo, log=lambda msg: None)
+
+    def test_waits_out_each_reset_between_subreddits(self):
+        with TemporaryDirectory() as tmp:
+            http = RedditHttp(*[reddit_ok() for _ in reddit.SUBREDDITS])
+            items, errors = self.run_fetch(http, Path(tmp))
+        self.assertEqual(errors, {})
+        self.assertEqual(http.requested, reddit.SUBREDDITS)
+        self.assertEqual(self.slept, [50 + reddit.GAP[0]] * (len(reddit.SUBREDDITS) - 1))
+        self.assertEqual(len(items), len(reddit.SUBREDDITS))
+
+    def test_429_is_retried_once_after_the_reset(self):
+        with TemporaryDirectory() as tmp:
+            limited = Response(429, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "20"})
+            http = RedditHttp(limited, *[reddit_ok("5") for _ in reddit.SUBREDDITS])
+            items, errors = self.run_fetch(http, Path(tmp))
+        self.assertEqual(errors, {})
+        self.assertEqual(http.requested[:2], [reddit.SUBREDDITS[0]] * 2)
+        self.assertEqual(self.slept[0], 20 + reddit.GAP[0])
+
+    def test_long_wait_defers_the_rest_to_the_next_run(self):
+        with TemporaryDirectory() as tmp:
+            http = RedditHttp(reddit_ok(), Response(429, {"retry-after": "600"}))
+            items, errors = self.run_fetch(http, Path(tmp))
+        self.assertEqual(len(items), 1)
+        self.assertEqual(http.requested, reddit.SUBREDDITS[:2])  # nothing sent after the long 429
+        self.assertEqual(sorted(errors), sorted(f"r/{s}" for s in reddit.SUBREDDITS[1:]))
+        self.assertIn("left for the next run", errors[f"r/{reddit.SUBREDDITS[1]}"])
+
+    def test_total_wait_is_capped_per_run(self):
+        with TemporaryDirectory() as tmp:
+            per_wait = 85 + reddit.GAP[0]
+            http = RedditHttp(*[reddit_ok("85") for _ in reddit.SUBREDDITS])
+            items, errors = self.run_fetch(http, Path(tmp))
+        fits = reddit.BUDGET // per_wait
+        self.assertEqual(self.slept, [per_wait] * fits)
+        self.assertEqual(len(items), fits + 1)
+        self.assertEqual(len(errors), len(reddit.SUBREDDITS) - fits - 1)
+
+    def test_next_run_reads_only_missing_or_stale_subreddits(self):
+        with TemporaryDirectory() as tmp:
+            self.run_fetch(RedditHttp(reddit_ok(), Response(429, {"retry-after": "600"})), Path(tmp))
+            later = NOW + timedelta(minutes=30)
+            http = RedditHttp(*[reddit_ok("5") for _ in reddit.SUBREDDITS[1:]])
+            items, errors = self.run_fetch(http, Path(tmp), now=later)
+            self.assertEqual((errors, len(items)), ({}, len(reddit.SUBREDDITS)))
+            self.assertEqual(http.requested, reddit.SUBREDDITS[1:])
+            stale = NOW + timedelta(hours=reddit.CACHE_HOURS, minutes=1)
+            http = RedditHttp(*[reddit_ok("5") for _ in reddit.SUBREDDITS])
+            self.run_fetch(http, Path(tmp), now=stale)
+            self.assertEqual(http.requested[0], reddit.SUBREDDITS[0])
 
 
 if __name__ == "__main__":

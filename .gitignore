@@ -1,0 +1,7 @@
+# scan output is a research cache: never publish it (SECURITY.md)
+scan-output/
+__pycache__/
+*.py[oc]
+.venv/
+.env
+.env.*

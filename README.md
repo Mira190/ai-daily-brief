@@ -22,6 +22,29 @@
 5. 按“事件增量”与最近 7 天归档去重，不用没有新进展的旧闻补数。
 6. 对技术实质、传播速度、开发者影响和证据成熟度分别判断。
 
+## 宽扫候选采集
+
+第 2 步的一部分由 `scan` 自动完成：抓取过去 24 小时（Australia/Sydney）的候选条目，并对照已发布的 `index.html` 标出往期引用过的链接，供第 5 步去重。
+
+```bash
+uv sync
+uv run python -m scan                      # 写入 scan-output/<日期>.md 和 .json
+uv run python -m scan --sources hn,hf --hours 48
+uv run python -m unittest discover -s tests
+```
+
+| 来源 | 内容 | 筛选 |
+|---|---|---|
+| `hn` | Hacker News（Algolia API） | ≥ 30 points，标题含 AI 相关词（整词匹配） |
+| `hf` | Hugging Face 每日论文 | 按 upvotes 取前 15，arXiv 与 HF 论文链接视为同一篇 |
+| `github` | 近 7 天新建的 `llm` / `ai-agents` / `mcp` 主题仓库 | ≥ 50 stars，没有描述的仓库丢弃（多为垃圾或钓鱼仓库） |
+| `rss` | Hugging Face、OpenAI、Google DeepMind、Simon Willison 博客 | 窗口内发布；没有发布时间的条目丢弃，不当作新闻 |
+| `reddit` | r/LocalLLaMA、r/MachineLearning、r/ClaudeAI、r/ChatGPT 当日热门 | 尽力而为：未登录访问经常被限流 |
+
+输出是候选清单，不是简报：每条仍要走第 3–4 步回到原始来源核实。某个来源抓取失败时，结果开头会列出「未覆盖的来源」，这些渠道需要手动补扫，不能当作当天没有新闻。设置 `GITHUB_TOKEN` 环境变量可提高 GitHub API 限额（只用于请求头，不会写入输出）。
+
+`scan-output/` 已加入 `.gitignore`：采集结果属于研究缓存，按 [SECURITY.md](SECURITY.md) 不进入公开仓库。
+
 ## 站点功能
 
 - 按年份和月份折叠浏览历史简报
@@ -66,6 +89,9 @@ flowchart LR
 ├── index.html                  # 完整简报归档与交互界面
 ├── README.md                   # 项目说明
 ├── SECURITY.md                 # 安全与隐私政策
+├── scan/                       # 宽扫候选采集（python -m scan）
+├── tests/                      # scan 的离线单元测试
+├── pyproject.toml / uv.lock    # Python 依赖
 ├── .nojekyll                   # 禁用 Jekyll 转换
 └── .github/workflows/pages.yml # GitHub Pages 部署
 ```

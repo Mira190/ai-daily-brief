@@ -1,29 +1,37 @@
-"""Reddit, read at the pace Reddit allows anonymous readers.
+"""Reddit, through its official Data API only.
 
-An anonymous client gets about one request per rate-limit window:
-x-ratelimit-remaining drops to 0 after a single call and x-ratelimit-reset says
-when it refills. So subreddits are read one at a time, waiting out each reset
-plus a few seconds, like a person clicking through. Each subreddit's result is
-cached for CACHE_HOURS, and a wait longer than MAX_WAIT (or past BUDGET in
-total) is not sat out: the remaining subreddits are left for the next run,
-which reads only what is missing or stale. Several runs over a day fill the
-picture in bit by bit.
+Reddit's robots.txt disallows all anonymous crawling (User-agent: * /
+Disallow: /) and its Public Content Policy points programmatic readers to the
+Data API, so this needs a registered app: set REDDIT_CLIENT_ID and
+REDDIT_CLIENT_SECRET (a "script" app at https://www.reddit.com/prefs/apps) and
+REDDIT_USERNAME for the User-Agent Reddit asks for. Without them the source is
+reported as not covered; it never falls back to scraping.
+
+Requests still follow the rate-limit headers: subreddits are read one at a
+time, waiting out x-ratelimit-reset when the budget is spent. Each subreddit's
+result is cached for CACHE_HOURS, and a wait longer than MAX_WAIT (or past
+BUDGET in total) is not sat out: the remaining subreddits are left for the next
+run, which reads only what is missing or stale.
 """
 import json
+import os
 import random
 import sys
 import time
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
-from .sources import Item, parse_feed
+from .sources import Item, plain_text
 
 SUBREDDITS = ["LocalLLaMA", "MachineLearning", "ClaudeAI", "ChatGPT"]
 CACHE_HOURS = 3
 MAX_WAIT = 90  # seconds; longer than this, defer to the next run
 BUDGET = 300  # seconds of waiting per run in total
-GAP = (4, 9)  # extra seconds on top of the reset, so requests never line up back to back
+GAP = (1, 3)  # extra seconds between requests
 PER_SUB = 5
+TOKEN_URL = "https://www.reddit.com/api/v1/access_token"
+NOT_CONFIGURED = ("not configured: set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET (Reddit's robots.txt "
+                  "disallows anonymous crawling, so only the official Data API is used)")
 
 
 def _log(msg):
@@ -70,17 +78,57 @@ class Cache:
         }, ensure_ascii=False), encoding="utf-8")
 
 
-def fetch(http, since, cache_dir, sleep=time.sleep, now=lambda: datetime.now(timezone.utc),
-          jitter=random.uniform, log=_log):
-    cache = Cache(cache_dir, now)
-    items, errors = [], {}
-    wait = waited = 0.0
-    for sub in SUBREDDITS:
-        name = f"r/{sub}"
-        cached = cache.load(sub, since)
-        if cached is not None:
-            items += cached
+def user_agent(username):
+    # the format Reddit's API rules ask for
+    return f"python:ai-daily-brief-scan:0.2 (by /u/{username or 'unknown'})"
+
+
+def parse_listing(data, since, name):
+    items = []
+    for child in data.get("data", {}).get("children", []):
+        post = child.get("data", {})
+        if post.get("stickied") or not post.get("permalink"):
             continue
+        published = datetime.fromtimestamp(post["created_utc"], timezone.utc)
+        if published < since:
+            continue
+        link = f"https://www.reddit.com{post['permalink']}"
+        external = post.get("url_overridden_by_dest") or ""
+        items.append(Item(name, plain_text(post.get("title"), 200), link, published,
+                          score=post.get("score"), comments=post.get("num_comments"),
+                          excerpt=plain_text(post.get("selftext")),
+                          alt_urls=[external] if external and "reddit.com" not in external else []))
+    items.sort(key=lambda i: i.score or 0, reverse=True)
+    return items[:PER_SUB]
+
+
+def token(http, env, headers):
+    res = http.post(TOKEN_URL, {"grant_type": "client_credentials"},
+                    auth=(env["REDDIT_CLIENT_ID"], env["REDDIT_CLIENT_SECRET"]), headers=headers)
+    res.raise_for_status()
+    return res.json()["access_token"]
+
+
+def fetch(http, since, cache_dir, env=None, sleep=time.sleep, now=lambda: datetime.now(timezone.utc),
+          jitter=random.uniform, log=_log):
+    env = os.environ if env is None else env
+    cache = Cache(cache_dir, now)
+    items, errors, todo = [], {}, []
+    for sub in SUBREDDITS:
+        cached = cache.load(sub, since)
+        if cached is None:
+            todo.append(sub)
+        else:
+            items += cached
+    if not todo:
+        return items, errors
+    if not (env.get("REDDIT_CLIENT_ID") and env.get("REDDIT_CLIENT_SECRET")):
+        return items, {"reddit": NOT_CONFIGURED}
+    headers = {"User-Agent": user_agent(env.get("REDDIT_USERNAME"))}
+    headers["Authorization"] = f"Bearer {token(http, env, headers)}"
+    wait = waited = 0.0
+    for sub in todo:
+        name = f"r/{sub}"
         res = None
         for attempt in range(2):
             if wait > MAX_WAIT or waited + wait > BUDGET:
@@ -89,8 +137,7 @@ def fetch(http, since, cache_dir, sleep=time.sleep, now=lambda: datetime.now(tim
                 log(f"{name}: waiting {wait:.0f}s for Reddit's rate limit")
                 sleep(wait)
                 waited += wait
-            # the JSON API answers 403 without OAuth; the RSS view does not
-            res = http.get(f"https://www.reddit.com/r/{sub}/top/.rss?t=day")
+            res = http.get(f"https://oauth.reddit.com/r/{sub}/top", {"t": "day", "limit": 25}, headers)
             wait = wait_for(res.headers) + jitter(*GAP)
             if res.status_code != 429:
                 break
@@ -101,7 +148,7 @@ def fetch(http, since, cache_dir, sleep=time.sleep, now=lambda: datetime.now(tim
         if res.status_code != 200:
             errors[name] = f"HTTP {res.status_code}"
             continue
-        got = parse_feed(res.content, since, name, PER_SUB)
+        got = parse_listing(res.json(), since, name)
         cache.save(sub, got)
         items += got
     return items, errors

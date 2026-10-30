@@ -64,9 +64,12 @@ class Http:
         res.raise_for_status()
         return res.content
 
-    def get(self, url):
+    def get(self, url, params=None, headers=None):
         """The raw response, for callers that read status and rate-limit headers themselves."""
-        return self.session.get(url, timeout=TIMEOUT)
+        return self.session.get(url, params=params, headers=headers, timeout=TIMEOUT)
+
+    def post(self, url, data, auth=None, headers=None):
+        return self.session.post(url, data=data, auth=auth, headers=headers, timeout=TIMEOUT)
 
 
 class _TextOnly(HTMLParser):
@@ -124,7 +127,30 @@ def fetch_rss(http, since):
             items += fetch_feed(http, since, name, url)
         except Exception as e:
             errors[name] = str(e)
+    try:
+        items += fetch_anthropic(http, since)
+    except Exception as e:
+        errors["Anthropic News"] = str(e)
     return items, errors
+
+
+SITEMAP_URL = re.compile(r"<url>\s*<loc>([^<]+)</loc>\s*<lastmod>([^<]+)</lastmod>")
+OG_TITLE = re.compile(r'<meta\s+property="og:title"\s+content="([^"]*)"')
+
+
+def fetch_anthropic(http, since, limit=5):
+    """anthropic.com/news has no feed; its sitemap's lastmod finds new or updated posts (robots.txt allows /)."""
+    sitemap = http.get_bytes("https://www.anthropic.com/sitemap.xml").decode("utf-8", "replace")
+    recent = sorted(((_parse_iso(mod), loc) for loc, mod in SITEMAP_URL.findall(sitemap)
+                     if "/news/" in loc and _parse_iso(mod) >= since), reverse=True)[:limit]
+    items = []
+    for modified, url in recent:
+        title = OG_TITLE.search(http.get_bytes(url).decode("utf-8", "replace"))
+        title = title.group(1) if title else url.rstrip("/").rsplit("/", 1)[-1].replace("-", " ")
+        # the pages' descriptions are the site boilerplate; lastmod also moves on edits, so say so
+        items.append(Item("Anthropic News", plain_text(title, 200), url, modified,
+                          excerpt="(sitemap lastmod: new or edited)"))
+    return items
 
 
 def fetch_hacker_news(http, since, min_points=30):

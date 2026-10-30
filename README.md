@@ -38,12 +38,14 @@ uv run python -m unittest discover -s tests
 | `hn` | Hacker News（Algolia API） | ≥ 30 points，标题含 AI 相关词（整词匹配） |
 | `hf` | Hugging Face 每日论文 | 按 upvotes 取前 15，arXiv 与 HF 论文链接视为同一篇 |
 | `github` | 近 7 天新建的 `llm` / `ai-agents` / `mcp` 主题仓库 | ≥ 50 stars，没有描述的仓库丢弃（多为垃圾或钓鱼仓库） |
-| `rss` | Hugging Face、OpenAI、Google DeepMind、Simon Willison 博客 | 窗口内发布；没有发布时间的条目丢弃，不当作新闻 |
-| `reddit` | r/LocalLLaMA、r/MachineLearning、r/ClaudeAI、r/ChatGPT 当日热门 | 每版前 5 条，按限流节奏逐个读取（见下） |
+| `rss` | Hugging Face、OpenAI、Google DeepMind、Simon Willison 博客；Anthropic News | 窗口内发布；没有发布时间的条目丢弃，不当作新闻。Anthropic 没有 RSS，用 sitemap 的 lastmod 发现新文章（robots.txt 允许），编辑过的旧文也会出现，摘要标为 `(sitemap lastmod: new or edited)` |
+| `reddit` | r/LocalLLaMA、r/MachineLearning、r/ClaudeAI、r/ChatGPT 当日热门 | 只走官方 Data API，需要配置凭据（见下）；每版前 5 条 |
 
 输出是候选清单，不是简报：每条仍要走第 3–4 步回到原始来源核实。某个来源抓取失败时，结果开头会列出「未覆盖的来源」，这些渠道需要手动补扫，不能当作当天没有新闻。设置 `GITHUB_TOKEN` 环境变量可提高 GitHub API 限额（只用于请求头，不会写入输出）。
 
-Reddit 不登录时每个限流窗口（约 1 分钟）只接受 1 次请求，所以 `reddit` 按响应头 `x-ratelimit-reset` 等到额度恢复、再多等几秒，然后才读下一个版块，抓满 4 个版块约需 1–3 分钟。每个版块的结果缓存 3 小时（`scan-output/.cache/`）。如果单次等待超过 90 秒，或本次运行累计等待超过 5 分钟，剩下的版块会留到下次运行，并在「未覆盖的来源」里注明。下次运行只补抓缺失或过期的版块，一天多跑几次就能补齐。
+Reddit 的 robots.txt 禁止一切匿名抓取（`User-agent: * / Disallow: /`），官方要求程序访问走 Data API，所以 `reddit` 只用 OAuth：在 <https://www.reddit.com/prefs/apps> 建一个 script 类型的应用，然后设置环境变量 `REDDIT_CLIENT_ID`、`REDDIT_CLIENT_SECRET` 和 `REDDIT_USERNAME`（用于 Reddit 要求的 User-Agent）。没有配置时，这个来源会列为「未覆盖」，不会退回匿名抓取。请求仍按响应头 `x-ratelimit-*` 限速。每个版块的结果缓存 3 小时（`scan-output/.cache/`）。单次等待超过 90 秒，或本次运行累计等待超过 5 分钟时，剩下的版块留到下次运行。
+
+Glassdoor、一亩三分地、Blind、LeetCode Discuss 等站点的条款禁止自动抓取，不作为来源。
 
 `scan-output/` 已加入 `.gitignore`：采集结果属于研究缓存，按 [SECURITY.md](SECURITY.md) 不进入公开仓库。
 
